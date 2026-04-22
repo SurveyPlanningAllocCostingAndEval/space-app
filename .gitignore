@@ -1,0 +1,17 @@
+# AI assistant context and instructions — not part of the codebase
+.claude/
+CLAUDE.md
+
+# R session history and user-level R profile
+.Rhistory
+.Rprofile
+
+# RStudio project metadata
+.Rproj.user/
+
+# renv package cache — restored from renv.lock, not committed
+renv/library/
+renv/staging/
+
+# Local data files — not for version control (may contain sensitive or large files)
+data/

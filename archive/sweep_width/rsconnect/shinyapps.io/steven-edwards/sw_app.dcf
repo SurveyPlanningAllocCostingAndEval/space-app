@@ -1,0 +1,10 @@
+name: sw_app
+title:
+username: steven-edwards
+account: steven-edwards
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16822616
+bundleId: 11684085
+url: https://steven-edwards.shinyapps.io/sw_app/
+version: 1

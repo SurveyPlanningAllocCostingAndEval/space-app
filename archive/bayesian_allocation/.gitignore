@@ -1,0 +1,21 @@
+# RStudio junk
+.Rproj.user/
+.Rhistory
+.RData
+.Rprofile
+
+# renv environment (optional to ignore)
+renv/
+renv.lock
+
+# ShinyApps.io deployment
+rsconnect/
+
+# Output logs
+outputs/
+**/outputs/
+**/*_iter_*.csv
+**/day*_*.xlsx
+
+# Windows junk
+Thumbs.db

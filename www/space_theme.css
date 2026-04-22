@@ -1,0 +1,434 @@
+/* ==========================================================================
+   SPACE — Shared Theme
+   Source of truth for all visual styling across the SPACE application.
+   Extracted from sweep_width/ui/header_ui.R (reference aesthetic) with
+   Bayesian Allocation-only classes merged in and restyled to match.
+   ========================================================================== */
+
+/* ---- Header bar ---- */
+.header-bar {
+  background-color: #092646;
+  color: white;
+  width: 100%;
+  height: 72px;
+  padding: 0;
+  margin: 0;
+  display: block;
+  box-sizing: border-box;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.18);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 100%;
+  padding: 0 30px;
+  gap: 24px;
+}
+
+.header-bar img {
+  height: 100%;
+  width: auto;
+  display: block;
+  object-fit: contain;
+}
+
+/* ---- Clickable logo link (strips all anchor chrome) ---- */
+a.header-logo-link,
+a.header-logo-link:hover,
+a.header-logo-link:focus,
+a.header-logo-link:active {
+  display: block;
+  height: 100%;
+  text-decoration: none;
+  border: none;
+  outline: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.header-title {
+  font-family: 'Impact','Arial Black',sans-serif;
+  font-size: 36px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  margin: 0;
+  color: white;
+}
+
+.header-inner > div {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-subtitle {
+  font-size: 27px;
+  font-weight: 400;
+  margin: 0;
+  color: white;
+  text-align: center;
+  width: 100%;
+}
+
+/* ---- Body ---- */
+body, .shiny-bound-output {
+  background-color: #fbfbfc;
+}
+
+/* ---- General text ---- */
+p {
+  font-size: 15px;
+  color: #222;
+  line-height: 1.6;
+}
+
+ol, ul {
+  margin-left: 25px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+li {
+  margin-bottom: 10px;
+}
+
+/* ---- Headings ---- */
+h3, h4 {
+  color: #1E3765;
+  font-weight: 700;
+}
+
+h5 {
+  color: #1E3765;
+  font-weight: 600;
+}
+
+/* ---- Highlight class ---- */
+.highlight {
+  font-weight: 600;
+  color: #1E3765;
+}
+
+/* ---- Instructions block ---- */
+.instructions {
+  line-height: 1.6;
+  font-size: 16px;
+  color: #222;
+  max-width: 900px;
+}
+
+.instructions h3 {
+  margin-top: 25px;
+  margin-bottom: 10px;
+  color: #1E3765;
+  font-weight: 700;
+}
+
+.instructions p  { font-size: 15px; color: #222; }
+.instructions ol { margin-left: 25px; margin-top: 10px; }
+.instructions ul { margin-left: 25px; }
+
+/* ---- Horizontal rules ---- */
+hr {
+  border: 0;
+  border-top: 1px solid rgba(30,55,101,0.15);
+  margin: 16px 0;
+}
+
+/* ---- Form controls ---- */
+input, select, .form-control {
+  border-radius: 6px !important;
+  border: 1px solid #ccc !important;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
+}
+
+/* ---- Tab strip ---- */
+.nav-tabs {
+  border-bottom: 2px solid #1E3765 !important;
+  background-color: #f7f8fa;
+  padding: 6px 15px 0 15px;
+}
+
+.nav-tabs > li > a {
+  color: #1E3765 !important;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 4px 4px 0 0 !important;
+  border: 1px solid transparent !important;
+  padding: 8px 16px;
+}
+
+.nav-tabs > li > a:hover {
+  background-color: #e8edf5 !important;
+  border-color: #c5d0e0 #c5d0e0 transparent !important;
+  color: #1E3765 !important;
+}
+
+.nav-tabs > li.active > a,
+.nav-tabs > li.active > a:hover,
+.nav-tabs > li.active > a:focus {
+  color: #1E3765 !important;
+  font-weight: 700 !important;
+  background-color: #ffffff !important;
+  border: 1px solid #c5d0e0 !important;
+  border-bottom-color: #ffffff !important;
+}
+
+/* ---- Tab content area ---- */
+.tab-content {
+  background-color: #ffffff;
+  border: 1px solid #c5d0e0;
+  border-top: none;
+  padding: 12px 20px 25px 20px;
+  border-radius: 0 0 6px 6px;
+}
+
+/* ---- Action buttons ---- */
+.custom-btn {
+  background: linear-gradient(180deg, #1E3765 0%, #162a4e 100%) !important;
+  color: white !important;
+  border: none !important;
+  width: 100%;
+  margin-top: 8px;
+  margin-bottom: 8px;
+  height: 42px;
+  font-weight: 600;
+  font-size: 15px;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  transition: all 0.25s ease-in-out;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+.custom-btn:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, #2A4D8F 0%, #203d73 100%) !important;
+  box-shadow: 0 3px 10px rgba(30,55,101,0.35);
+}
+
+/* ---- Standard button colour overrides ---- */
+.btn-primary {
+  background-color: #1E3765 !important;
+  border-color: #1E3765 !important;
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background-color: #2A4D8F !important;
+  border-color: #2A4D8F !important;
+}
+
+.btn-success {
+  background-color: #1E6645 !important;
+  border-color: #1E6645 !important;
+  font-weight: 600;
+}
+
+.btn-success:hover {
+  background-color: #27855a !important;
+  border-color: #27855a !important;
+}
+
+.btn-info {
+  background-color: #2A6496 !important;
+  border-color: #2A6496 !important;
+  font-weight: 600;
+}
+
+.btn-info:hover {
+  background-color: #3a7abf !important;
+  border-color: #3a7abf !important;
+}
+
+/* ---- Step labels (from Bayesian Allocation, restyled to match) ---- */
+.step-label {
+  color: #1E3765;
+  font-weight: 700;
+  margin-top: 18px;
+  margin-bottom: 6px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease-in-out;
+}
+
+.step-label:hover {
+  color: #2A4D8F;
+  transform: translateX(2px);
+  cursor: default;
+}
+
+/* ---- Inline help icons (from Bayesian Allocation, restyled to match) ---- */
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1E3765;
+  border: 1px solid #b8c2d1;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: help;
+  user-select: none;
+}
+
+.help-icon:hover {
+  background: #eef3fb;
+  border-color: #8aa0c6;
+}
+
+/* ---- Sidebar panel (from Bayesian Allocation, restyled to match) ---- */
+.sidebar-panel {
+  background-color: #f7f8fa;
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  margin-top: 10px;
+}
+
+.sidebar-title {
+  text-align: center;
+  font-weight: 500;
+  color: #1E3765;
+  margin-top: 10px;
+  margin-bottom: 15px;
+  font-size: 20px;
+}
+
+.main-heading {
+  font-weight: 700;
+  color: #1E3765;
+  font-size: 20px;
+  margin-bottom: 8px;
+  margin-top: 10px;
+}
+
+/* ---- Allocations tab: sidebar + main panel two-column layout ---- */
+.alloc-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  margin-top: 8px;
+}
+
+.alloc-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+}
+
+.alloc-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- Alert boxes ---- */
+.alert-success {
+  background-color: #eaf4ee;
+  border-color: #b2dbbf;
+  color: #1E3765;
+}
+
+.alert-danger {
+  background-color: #fdf0f0;
+  border-color: #f5c6cb;
+  color: #7b1a1a;
+}
+
+/* ---- Tables ---- */
+.dataTables_wrapper { margin-top: 10px; }
+
+/* ---- Footer ---- */
+.app-footer {
+  padding: 10px 15px;
+  border-top: 1px solid rgba(30,55,101,0.15);
+  margin-top: 20px;
+  font-size: 0.85em;
+  color: #666;
+}
+
+/* ---- Landing page cards ---- */
+.space-card {
+  background-color: #ffffff;
+  border: 1px solid #c5d0e0;
+  border-radius: 10px;
+  margin-bottom: 24px;
+  box-shadow: 0 2px 8px rgba(30,55,101,0.08);
+  transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+  overflow: hidden;
+}
+
+.space-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(30,55,101,0.18);
+  border-color: #2A4D8F;
+}
+
+.space-card-body {
+  padding: 28px 24px 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.space-card-title {
+  color: #1E3765;
+  font-weight: 700;
+  font-size: 19px;
+  margin: 0 0 4px 0;
+}
+
+.space-card-desc {
+  color: #444;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0 0 8px 0;
+  flex-grow: 1;
+}
+
+.space-card-btn {
+  align-self: flex-start;
+  width: auto !important;
+  padding: 8px 22px;
+  height: auto !important;
+  font-size: 14px !important;
+}
+
+/* ---- Allocation module form density (moved from inline tags$style) ---- */
+.form-group.shiny-input-container { margin-bottom: 6px !important; }
+.help-block {
+  margin-top:    2px  !important;
+  margin-bottom: 4px  !important;
+  font-size:     13px !important;
+  color:         #555 !important;
+}
+
+/* ---- Reset Module button (header bar, left of Back button) ---- */
+.btn-reset-module {
+  color: #f5a623;
+  background-color: transparent;
+  border: 1px solid rgba(245,166,35,0.65);
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 6px 14px;
+  white-space: nowrap;
+  transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+.btn-reset-module:hover,
+.btn-reset-module:focus {
+  color: #ffffff;
+  background-color: rgba(180,90,10,0.55);
+  border-color: rgba(245,166,35,0.9);
+  outline: none;
+}
