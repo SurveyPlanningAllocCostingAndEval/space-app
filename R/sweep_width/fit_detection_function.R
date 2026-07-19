@@ -172,9 +172,24 @@ prepare_detection_probs <- function(records_classified, master, side, n_runs = 1
 #'                           nonlinear regression. Defaults to 0.5.
 #' @param k_start            Numeric. Starting value for parameter k in the
 #'                           nonlinear regression. Defaults to 0.05.
+#' @param se_method          Character. One of "Delta" or "Bootstrap".
+#'                           Controls how W_se/W_ci_low/W_ci_high are derived.
+#'                           "Delta" (default) uses a first-order Taylor
+#'                           expansion around the fitted (b, k). "Bootstrap"
+#'                           uses nonparametric case resampling (see
+#'                           bootstrap_esw_ci()); slower, but does not rely
+#'                           on asymptotic normality.
+#' @param n_boot             Integer. Number of bootstrap resamples, used
+#'                           only when se_method = "Bootstrap". Defaults to
+#'                           1000.
 #'
 #' @return A named list containing:
 #'   \item{W}{Effective Sweep Width in metres (full bilateral equivalent)}
+#'   \item{W_se}{Standard error of W, via the selected se_method}
+#'   \item{W_ci_low}{Lower bound of the 95% confidence interval for W}
+#'   \item{W_ci_high}{Upper bound of the 95% confidence interval for W}
+#'   \item{se_method}{Character. The method used: "Delta" or "Bootstrap"}
+#'   \item{n_boot_success}{Bootstrap only: number of resamples that converged}
 #'   \item{b}{Fitted detection probability at the transect (r = 0)}
 #'   \item{b_se}{Standard error of b}
 #'   \item{k}{Fitted decay constant}
@@ -187,10 +202,17 @@ prepare_detection_probs <- function(records_classified, master, side, n_runs = 1
 
 fit_esw <- function(records_classified,
                     master,
-                    side    = "Right",
-                    b_start = 0.5,
-                    k_start = 0.05,
-                    n_runs  = 1) {
+                    side       = "Right",
+                    b_start    = 0.5,
+                    k_start    = 0.05,
+                    n_runs     = 1,
+                    se_method  = "Delta",
+                    n_boot     = 1000) {
+
+  valid_se_methods <- c("Delta", "Bootstrap")
+  if (!se_method %in% valid_se_methods) {
+    stop(paste("'se_method' must be one of:", paste(valid_se_methods, collapse = ", ")))
+  }
   
   # --- Validate inputs -------------------------------------------------------
   required_rec <- c("Dist", "LorR", "Detected")
@@ -240,45 +262,293 @@ fit_esw <- function(records_classified,
   )
   
   coefs  <- coef(fit)
-  ses    <- sqrt(diag(vcov(fit)))
+  vc     <- vcov(fit)
+  ses    <- sqrt(diag(vc))
   b_hat  <- coefs["b"]
   k_hat  <- coefs["k"]
   b_se   <- ses["b"]
   k_se   <- ses["k"]
-  
+
   # --- Compute ESW -----------------------------------------------------------
   # W = b * sqrt(pi / k)  [full bilateral sweep width in metres]
   W <- b_hat * sqrt(pi / k_hat)
-  
+
+  # --- SE and 95% CI for W -----------------------------------------------------
+  n_boot_success <- NA_integer_
+  boot_median    <- NA_real_
+  skew_flag      <- NA
+  boot_b         <- NULL
+  boot_k         <- NULL
+
+  if (se_method == "Delta") {
+    # W is a nonlinear function of (b, k), so its variance is approximated via
+    # a first-order Taylor expansion using the fitted covariance matrix of
+    # (b, k):
+    #   dW/db = sqrt(pi / k)
+    #   dW/dk = -b * sqrt(pi) / (2 * k^1.5)
+    #   Var(W) ~= dW^T %*% vcov(b, k) %*% dW
+    # The b-k covariance term (off-diagonal of vc) is included, not just the
+    # individual variances of b and k.
+    dW_db <- sqrt(pi / k_hat)
+    dW_dk <- -b_hat * sqrt(pi) / (2 * k_hat^1.5)
+    grad  <- c(dW_db, dW_dk)
+
+    W_var <- as.numeric(t(grad) %*% vc[c("b", "k"), c("b", "k")] %*% grad)
+    W_se  <- if (is.finite(W_var) && W_var >= 0) sqrt(W_var) else NA_real_
+
+    df_resid <- tryCatch(summary(fit)$df[2], error = function(e) NA_integer_)
+    if (is.null(df_resid) || is.na(df_resid) || df_resid <= 0) {
+      t_crit <- qnorm(0.975)
+    } else {
+      t_crit <- qt(0.975, df = df_resid)
+    }
+
+    if (!is.na(W_se)) {
+      W_ci_low  <- W - t_crit * W_se
+      W_ci_high <- W + t_crit * W_se
+    } else {
+      W_ci_low  <- NA_real_
+      W_ci_high <- NA_real_
+    }
+
+  } else {
+    # Bootstrap: nonparametric case resampling of records_classified and
+    # master, refitting the full pipeline on each resample. See
+    # bootstrap_esw_ci() for details.
+    boot <- bootstrap_esw_ci(
+      records_classified = records_classified,
+      master              = master,
+      side                = side,
+      b_start             = b_start,
+      k_start             = k_start,
+      n_runs              = n_runs,
+      n_boot              = n_boot,
+      point_W             = W
+    )
+    W_se           <- boot$W_se
+    W_ci_low       <- boot$W_ci_low
+    W_ci_high      <- boot$W_ci_high
+    n_boot_success <- boot$n_boot_success
+    boot_median    <- boot$boot_median
+    skew_flag      <- boot$skew_flag
+    boot_b         <- boot$boot_b
+    boot_k         <- boot$boot_k
+  }
+
   # --- Generate fitted curve for plotting ------------------------------------
   dist_range <- seq(0, max(prob_df$dist) + 2, length.out = 300)
+  fitted_curve <- b_hat * exp(-k_hat * dist_range^2)
+
+  # --- Pointwise +/-1 SE envelope for the fitted curve ------------------------
+  # p(r) = b * exp(-k * r^2) is a nonlinear function of (b, k) at every
+  # distance r. The envelope is derived using whichever se_method was
+  # selected, mirroring the treatment of W itself:
+  #   Delta:     pointwise delta method using the fitted covariance matrix
+  #              of (b, k):
+  #                dp/db = exp(-k * r^2)
+  #                dp/dk = -b * r^2 * exp(-k * r^2)
+  #                Var(p(r)) ~= dp(r)^T %*% vcov(b, k) %*% dp(r)
+  #   Bootstrap: the (b, k) pairs from each successful bootstrap resample are
+  #              each used to compute a full resampled curve; the envelope is
+  #              the pointwise standard deviation of those resampled curves
+  #              (+/-1 SE, to match the delta-method envelope's scale).
+  # In both cases the envelope is clipped to [0, 1] since p(r) is a probability.
+  if (se_method == "Bootstrap" && !is.null(boot_b) && length(boot_b) >= 30) {
+    boot_curves <- vapply(seq_along(boot_b), function(i) {
+      boot_b[i] * exp(-boot_k[i] * dist_range^2)
+    }, numeric(length(dist_range)))
+    # boot_curves is [dist_range x n_boot_success]; take pointwise SD across resamples
+    fitted_se <- apply(boot_curves, 1, stats::sd)
+  } else {
+    dp_db <- exp(-k_hat * dist_range^2)
+    dp_dk <- -b_hat * dist_range^2 * exp(-k_hat * dist_range^2)
+    vc_bk <- vc[c("b", "k"), c("b", "k")]
+
+    fitted_se <- sqrt(pmax(
+      0,
+      vc_bk[1, 1] * dp_db^2 + vc_bk[2, 2] * dp_dk^2 +
+        2 * vc_bk[1, 2] * dp_db * dp_dk
+    ))
+  }
+
   fit_df <- data.frame(
-    dist   = dist_range,
-    fitted = b_hat * exp(-k_hat * dist_range^2)
+    dist       = dist_range,
+    fitted     = fitted_curve,
+    fitted_se  = fitted_se,
+    fitted_lo  = pmax(0, fitted_curve - fitted_se),
+    fitted_hi  = pmin(1, fitted_curve + fitted_se)
   )
-  
+
   # --- Compose summary message -----------------------------------------------
+  boot_note <- if (se_method == "Bootstrap") {
+    paste0(" [", se_method, ", ",
+           ifelse(is.na(n_boot_success), "NA", n_boot_success),
+           "/", n_boot, " resamples converged]")
+  } else {
+    paste0(" [", se_method, "]")
+  }
+  skew_note <- if (isTRUE(skew_flag)) {
+    paste0(
+      "\n  \u26a0 Note: point estimate (", round(W, 2), " m) falls outside the ",
+      "central 50% (IQR) of the bootstrap distribution (median = ",
+      round(boot_median, 2), " m). This suggests a skewed sampling ",
+      "distribution for W; consider this alongside the delta-method result ",
+      "and check whether more calibration data would stabilise the estimate."
+    )
+  } else {
+    ""
+  }
   msg <- paste0(
-    "Effective Sweep Width (", side, "): ", round(W, 2), " m\n",
+    "Effective Sweep Width (", side, "): ", round(W, 2), " m",
+    " (SE = ", ifelse(is.na(W_se), "NA", round(W_se, 2)),
+    ", 95% CI = [",
+    ifelse(is.na(W_ci_low),  "NA", round(W_ci_low,  2)), ", ",
+    ifelse(is.na(W_ci_high), "NA", round(W_ci_high, 2)), "] m)", boot_note, "\n",
     "  b = ", round(b_hat, 4), " (SE = ", round(b_se, 4), ")\n",
     "  k = ", round(k_hat, 4), " (SE = ", round(k_se, 4), ")\n",
     "  n distance bins used: ", nrow(prob_df), "\n",
-    "  n_runs: ", n_runs
+    "  n_runs: ", n_runs,
+    skew_note
   )
-  
+
   # --- Return results --------------------------------------------------------
   list(
-    W         = W,
-    b         = b_hat,
-    b_se      = b_se,
-    k         = k_hat,
-    k_se      = k_se,
-    side      = side,
-    n_runs    = n_runs,
-    prob_df   = prob_df,
-    fit_df    = fit_df,
-    converged = TRUE,
-    message   = msg
+    W              = W,
+    W_se           = W_se,
+    W_ci_low       = W_ci_low,
+    W_ci_high      = W_ci_high,
+    se_method      = se_method,
+    n_boot_success = n_boot_success,
+    boot_median    = boot_median,
+    skew_flag      = skew_flag,
+    b              = b_hat,
+    b_se           = b_se,
+    k              = k_hat,
+    k_se           = k_se,
+    side           = side,
+    n_runs         = n_runs,
+    prob_df        = prob_df,
+    fit_df         = fit_df,
+    converged      = TRUE,
+    message        = msg
+  )
+}
+
+
+#' Bootstrap SE and 95% CI for W via nonparametric case resampling
+#'
+#' Resamples both `records_classified` (surveyor detection events, already
+#' TRUE/FALSE classified) and `master` (seeded artifacts) with replacement,
+#' independently, refitting the full prepare_detection_probs() -> nlsLM
+#' pipeline on each resample. This mirrors the resampling design of the
+#' point estimate itself (which also treats the two tables independently)
+#' and avoids the delta method's reliance on asymptotic normality and
+#' linearization around the fitted (b, k).
+#'
+#' @param records_classified Data frame from classify_detections().
+#' @param master             Master artifact data frame.
+#' @param side               Character. One of "Left", "Right", "Total".
+#' @param b_start            Starting value for b in each resampled fit.
+#' @param k_start            Starting value for k in each resampled fit.
+#' @param n_runs             Number of pooled surveyor passes (see fit_esw()).
+#' @param n_boot             Number of bootstrap resamples. Default 1000.
+#' @param point_W            Numeric. The point estimate of W from the full
+#'                           (non-resampled) data, used only to flag whether
+#'                           it falls outside the central 50% (interquartile
+#'                           range) of the bootstrap distribution -- a sign
+#'                           of a skewed sampling distribution for W. Optional;
+#'                           if NULL, no flag is computed.
+#'
+#' @return A named list:
+#'   \item{W_se}{Bootstrap standard error of W (SD of resampled W values)}
+#'   \item{W_ci_low}{2.5th percentile of resampled W values}
+#'   \item{W_ci_high}{97.5th percentile of resampled W values}
+#'   \item{n_boot_success}{Number of resamples that converged and were used}
+#'   \item{n_boot}{Number of resamples requested}
+#'   \item{boot_W}{Numeric vector of resampled W values (successful fits only)}
+#'   \item{boot_median}{Median of resampled W values}
+#'   \item{skew_flag}{Logical. TRUE if point_W falls outside the IQR of the
+#'                    bootstrap distribution (possible skew/bias); NA if
+#'                    point_W was not supplied or too few resamples converged}
+#'   \item{boot_b}{Numeric vector of resampled b values (successful fits only)}
+#'   \item{boot_k}{Numeric vector of resampled k values (successful fits only)}
+
+bootstrap_esw_ci <- function(records_classified,
+                             master,
+                             side     = "Right",
+                             b_start  = 0.5,
+                             k_start  = 0.05,
+                             n_runs   = 1,
+                             n_boot   = 1000,
+                             point_W  = NULL) {
+
+  n_rec <- nrow(records_classified)
+  n_mas <- nrow(master)
+
+  boot_mat <- vapply(seq_len(n_boot), function(i) {
+    rec_i <- records_classified[sample.int(n_rec, n_rec, replace = TRUE), ]
+    mas_i <- master[sample.int(n_mas, n_mas, replace = TRUE), ]
+
+    res <- tryCatch(
+      {
+        prob_df_i <- prepare_detection_probs(rec_i, mas_i, side, n_runs = n_runs)
+        fit_i <- minpack.lm::nlsLM(
+          prob ~ b * exp(-k * dist^2),
+          data    = prob_df_i,
+          start   = list(b = b_start, k = k_start),
+          lower   = c(b = 0,    k = 1e-6),
+          upper   = c(b = 1,    k = Inf),
+          control = minpack.lm::nls.lm.control(maxiter = 1000)
+        )
+        coefs_i <- coef(fit_i)
+        c(W = unname(coefs_i["b"] * sqrt(pi / coefs_i["k"])),
+          b = unname(coefs_i["b"]), k = unname(coefs_i["k"]))
+      },
+      error = function(e) c(W = NA_real_, b = NA_real_, k = NA_real_)
+    )
+
+    res
+  }, numeric(3))
+
+  ok <- is.finite(boot_mat["W", ])
+  boot_W_ok <- boot_mat["W", ok]
+  boot_b_ok <- boot_mat["b", ok]
+  boot_k_ok <- boot_mat["k", ok]
+  n_success <- length(boot_W_ok)
+
+  if (n_success < 30) {
+    return(list(
+      W_se           = NA_real_,
+      W_ci_low       = NA_real_,
+      W_ci_high      = NA_real_,
+      n_boot_success = n_success,
+      n_boot         = n_boot,
+      boot_W         = boot_W_ok,
+      boot_median    = NA_real_,
+      skew_flag      = NA,
+      boot_b         = boot_b_ok,
+      boot_k         = boot_k_ok
+    ))
+  }
+
+  iqr <- stats::quantile(boot_W_ok, c(0.25, 0.75))
+  skew_flag <- if (is.null(point_W) || !is.finite(point_W)) {
+    NA
+  } else {
+    point_W < iqr[1] || point_W > iqr[2]
+  }
+
+  list(
+    W_se           = stats::sd(boot_W_ok),
+    W_ci_low       = unname(stats::quantile(boot_W_ok, 0.025)),
+    W_ci_high      = unname(stats::quantile(boot_W_ok, 0.975)),
+    n_boot_success = n_success,
+    n_boot         = n_boot,
+    boot_W         = boot_W_ok,
+    boot_median    = stats::median(boot_W_ok),
+    skew_flag      = skew_flag,
+    boot_b         = boot_b_ok,
+    boot_k         = boot_k_ok
   )
 }
 
@@ -295,46 +565,60 @@ fit_esw <- function(records_classified,
 #'                           "Left", "Right", "Total".
 #' @param b_start            Starting value for b. Defaults to 0.5.
 #' @param k_start            Starting value for k. Defaults to 0.05.
+#' @param se_method          Character. One of "Delta" or "Bootstrap".
+#'                           Passed through to fit_esw(). Defaults to "Delta".
+#' @param n_boot             Number of bootstrap resamples, used only when
+#'                           se_method = "Bootstrap". Defaults to 1000.
 #'
 #' @return A named list where each element corresponds to a requested side
 #'         and contains the output of fit_esw() for that side.
 
 fit_esw_multi <- function(records_classified,
                           master,
-                          sides   = c("Left", "Right", "Total"),
-                          b_start = 0.5,
-                          k_start = 0.05,
-                          n_runs  = 1) {
-  
+                          sides     = c("Left", "Right", "Total"),
+                          b_start   = 0.5,
+                          k_start   = 0.05,
+                          n_runs    = 1,
+                          se_method = "Delta",
+                          n_boot    = 1000) {
+
   valid_sides <- c("Left", "Right", "Total")
   invalid     <- setdiff(sides, valid_sides)
   if (length(invalid) > 0) {
     stop(paste("Invalid side(s):", paste(invalid, collapse = ", "),
                "\nMust be one or more of: Left, Right, Total"))
   }
-  
+
   results <- lapply(sides, function(s) {
     tryCatch(
       fit_esw(records_classified, master, side = s,
-              b_start = b_start, k_start = k_start, n_runs = n_runs),
+              b_start = b_start, k_start = k_start, n_runs = n_runs,
+              se_method = se_method, n_boot = n_boot),
       error = function(e) {
         list(
-          W         = NA,
-          b         = NA,
-          b_se      = NA,
-          k         = NA,
-          k_se      = NA,
-          side      = s,
-          prob_df   = NULL,
-          fit_df    = NULL,
-          converged = FALSE,
-          message   = paste("Could not compute ESW for side =", s,
+          W              = NA,
+          W_se           = NA,
+          W_ci_low       = NA,
+          W_ci_high      = NA,
+          se_method      = se_method,
+          n_boot_success = NA,
+          boot_median    = NA,
+          skew_flag      = NA,
+          b              = NA,
+          b_se           = NA,
+          k              = NA,
+          k_se           = NA,
+          side           = s,
+          prob_df        = NULL,
+          fit_df         = NULL,
+          converged      = FALSE,
+          message        = paste("Could not compute ESW for side =", s,
                             ":", e$message)
         )
       }
     )
   })
-  
+
   names(results) <- sides
   return(results)
 }

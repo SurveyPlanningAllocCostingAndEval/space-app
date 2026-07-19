@@ -314,13 +314,13 @@ sweepWidthUI <- function(id) {
                     class            = "help-icon",
                     `data-toggle`    = "tooltip",
                     `data-placement` = "right",
-                    title            = "Select Left, Right, or Total (both sides combined) for ESW computation."
+                    title            = "Select Left, Right, and/or Pooled (Symmetric Total) for ESW computation. Pooled Total fits one shared Gaussian curve to left+right data combined, and differs from the Bilateral Total shown on the Combined Plot (which sums independently-fit Left and Right half-widths) whenever detection performance is asymmetric between sides. See the Documentation tab for details."
                   )
                 ),
                 checkboxGroupInput(
                   inputId  = ns("esw_sides"),
                   label    = NULL,
-                  choices  = c("Left", "Right", "Total"),
+                  choices  = c("Left", "Right", "Pooled (Symmetric Total)" = "Total"),
                   selected = c("Left", "Right")
                 ),
 
@@ -370,10 +370,31 @@ sweepWidthUI <- function(id) {
 
                 hr(),
 
-                # Step 4: Compute ESW
+                # Step 4: SE / CI Method
                 div(
                   class = "step-label",
-                  tags$span("Step 4: Compute ESW")
+                  tags$span("Step 4: SE / CI Method for W"),
+                  tags$span(
+                    "?",
+                    class            = "help-icon",
+                    `data-toggle`    = "tooltip",
+                    `data-placement` = "right",
+                    title            = "Method used to estimate the standard error and 95% confidence interval of W. Delta method: fast, uses a Taylor-series approximation around the fitted b and k. Bootstrap: slower (refits the model 1000 times via case resampling), does not rely on asymptotic normality."
+                  )
+                ),
+                radioButtons(
+                  inputId  = ns("se_method"),
+                  label    = NULL,
+                  choices  = c("Delta method" = "Delta", "Bootstrap" = "Bootstrap"),
+                  selected = "Delta"
+                ),
+
+                hr(),
+
+                # Step 5: Compute ESW
+                div(
+                  class = "step-label",
+                  tags$span("Step 5: Compute ESW")
                 ),
                 actionButton(
                   inputId = ns("run_esw"),
@@ -394,15 +415,34 @@ sweepWidthUI <- function(id) {
                   br(),
                   uiOutput(ns("esw_messages")),
                   br(),
-                  tableOutput(ns("esw_summary_table"))
+                  tableOutput(ns("esw_summary_table")),
+                  tags$div(
+                    class = "esw-table-legend",
+                    tags$strong("Column reference: "),
+                    tags$dl(
+                      tags$dt("Side"),       tags$dd("Left, Right, Pooled Total (one curve fit to combined data), or Bilateral Total (sum of independently-fit Left/Right halves) — see Documentation tab."),
+                      tags$dt("n_runs"),     tags$dd("Number of pooled surveyor passes used for this fit."),
+                      tags$dt("ESW_m"),      tags$dd("Point estimate of the Effective Sweep Width W, in metres."),
+                      tags$dt("W_SE"),       tags$dd("Standard error of W, from the selected SE/CI method."),
+                      tags$dt("W_95CI_m"),   tags$dd("95% confidence interval for W."),
+                      tags$dt("SE_Method"),  tags$dd("How W_SE / W_95CI_m were computed: Delta method, Bootstrap, or Derived (for the Bilateral Total row, propagated from the Left and Right SEs)."),
+                      tags$dt("Skewed"),     tags$dd("\"Yes\" if the point estimate falls outside the central 50% of the bootstrap distribution — a sign the sampling distribution of W may be skewed (Bootstrap method only)."),
+                      tags$dt("b, k"),       tags$dd("Fitted detection-function parameters: b = detection probability at the transect line; k = decay constant."),
+                      tags$dt("b_SE, k_SE"), tags$dd("Standard errors of b and k, from the nonlinear fit's covariance matrix."),
+                      tags$dt("Converged"),  tags$dd("Whether the nonlinear regression fit succeeded for this row.")
+                    )
+                  )
                 ),
                 tabPanel(
                   "Detection Functions",
                   br(),
                   helpText(
                     "Observed detection probabilities (points) and the fitted Gaussian
-                    curve (line) for each selected side. The shaded region represents
-                    the area under the curve. The dashed red line marks W/2, the
+                    curve (line) for each selected side. The blue shaded region
+                    represents the area under the curve (this is a visual aid, not
+                    an uncertainty measure). The red shaded band is the ±1 SE
+                    envelope around the fitted curve, computed using the SE/CI
+                    method selected in Step 4. The dashed red line marks W/2, the
                     one-sided half sweep width."
                   ),
                   plotOutput(ns("detection_function_plot"), height = "420px")
@@ -413,9 +453,13 @@ sweepWidthUI <- function(id) {
                   helpText(
                     "Left-side distances are mirrored onto the negative x-axis to
                     produce a bilateral view of the transect. Dashed lines mark the
-                    W/2 boundary for each side. Total ESW is the sum of the two
-                    half-widths. This panel is only rendered when both Left and Right
-                    results are available."
+                    W/2 boundary for each side. The Bilateral Total ESW shown here
+                    is the sum of the two independently-fit half-widths (L/2 + R/2),
+                    which differs from the Pooled Total (one shared curve fit to
+                    left+right data combined, available as an option in Step 1)
+                    whenever detection performance is asymmetric between sides —
+                    see the Documentation tab. This panel is only rendered when
+                    both Left and Right results are available."
                   ),
                   plotOutput(ns("combined_plot"), height = "420px")
                 ),
@@ -512,8 +556,50 @@ sweepWidthUI <- function(id) {
                                "Detections are aggregated into observed probabilities by
                   distance bin. A Gaussian detection function p(r) = b\u00b7exp(\u2212kr\u00b2)
                   is fitted by constrained nonlinear least squares, and ESW is
-                  computed as W = b\u221a(\u03c0/k)."
+                  computed as W = b\u221a(\u03c0/k). A standard error and 95% confidence
+                  interval for W are obtained via either the delta method or a
+                  bootstrap (user-selectable) \u2014 see the Technical Notes section
+                  below."
                        )
+                     ),
+
+                     tags$hr(),
+
+                     tags$h4("Pooled Total vs. Bilateral Total"),
+                     tags$p(
+                       "The word \u201cTotal\u201d refers to two different, deliberately
+                separate calculations in this module \u2014 both are legitimate, but
+                they answer different questions and will only be numerically
+                equal when Left and Right detection performance happens to be
+                symmetric:"
+                     ),
+                     tags$ul(
+                       tags$li(
+                         tags$strong("Pooled Total "),
+                         "(Step 1 checkbox, ESW Results tab): pools all Left and
+                  Right detection records and seeded artifacts into a single
+                  dataset, then fits ", tags$strong("one"), " shared Gaussian
+                  curve p(r) = b\u00b7exp(\u2212kr\u00b2) to the combined data. This assumes
+                  detection performance is symmetric between sides."
+                       ),
+                       tags$li(
+                         tags$strong("Bilateral Total "),
+                         "(Combined Plot tab, and the derived row in the ESW
+                  Results summary table when both Left and Right are
+                  selected): fits Left and Right ", tags$strong("independently"),
+                  " as two separate models, then sums their half-widths
+                  (W", tags$sub("Left"), "/2 + W", tags$sub("Right"), "/2). This
+                  allows detection performance to differ by side."
+                       )
+                     ),
+                     tags$p(
+                       "If Left and Right detection performance differs
+                substantially in your data, expect Pooled Total and Bilateral
+                Total to diverge \u2014 this reflects a real modelling choice
+                (symmetric vs. asymmetric detection assumption), not an error.
+                Report whichever matches your study design, and consider
+                reporting both with an explanation if the two diverge
+                meaningfully."
                      ),
 
                      tags$hr(),
@@ -613,6 +699,45 @@ sweepWidthUI <- function(id) {
                 converge, try adjusting the starting values for b and k in
                 the ESW Results tab, or check whether sufficient distance bins
                 are present in your data (a minimum of 3 are required)."
+                     ),
+                     tags$p(
+                       "Two methods are available for estimating the standard error
+                and 95% confidence interval of W (selected in Step 4 of the ESW
+                Results tab):"
+                     ),
+                     tags$ul(
+                       tags$li(
+                         tags$strong("Delta method: "),
+                         "a first-order Taylor expansion of W = b\u221a(\u03c0/k) around
+                  the fitted values of b and k, using the full covariance matrix
+                  returned by the nonlinear fit (including the b\u2013k covariance
+                  term, not just their individual variances). The 95% confidence
+                  interval is computed as W \u00b1 t", tags$sub("0.975, df"),
+                  " \u00b7 SE(W), using the t-distribution with the residual degrees
+                  of freedom from the fit (falling back to a normal-based
+                  critical value if residual degrees of freedom are unavailable).
+                  This method is fast but relies on asymptotic normality and a
+                  linear approximation around the fitted parameters."
+                       ),
+                       tags$li(
+                         tags$strong("Bootstrap: "),
+                         "a nonparametric case-resampling bootstrap (1000
+                  resamples). Both the classified calibration records and the
+                  master artifact table are independently resampled with
+                  replacement, and the full detection-function fitting pipeline
+                  is re-run on each resample. The standard error is the standard
+                  deviation of the resampled W values, and the 95% confidence
+                  interval is the 2.5th\u201397.5th percentile range of that
+                  distribution. This method does not assume normality and can
+                  reveal skew in the sampling distribution of W, at the cost of
+                  additional computation time. If the original point estimate of
+                  W falls outside the interquartile range of the bootstrap
+                  distribution, a warning is shown, since this indicates the
+                  sampling distribution of W may be meaningfully skewed \u2014 in
+                  that case, report the bootstrap result and note the
+                  discrepancy rather than treating the delta-method interval as
+                  authoritative."
+                       )
                      ),
                      tags$p(
                        "Multi-panel plot layout uses the ", tags$code("patchwork"),

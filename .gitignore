@@ -15,3 +15,4 @@ renv/staging/
 
 # Local data files — not for version control (may contain sensitive or large files)
 data/
+.positai

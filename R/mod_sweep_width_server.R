@@ -68,6 +68,7 @@ sweepWidthServer <- function(id) {
       updateNumericInput(session, "n_runs",  value = 1)
       updateNumericInput(session, "b_start", value = 0.5)
       updateNumericInput(session, "k_start", value = 0.05)
+      updateRadioButtons(session, "se_method", selected = "Delta")
 
       # Reset slider inputs
       updateSliderInput(session, "perp_scale",  value = 0.20)
@@ -439,15 +440,40 @@ sweepWidthServer <- function(id) {
       n_runs <- rv$n_runs
       if (is.null(n_runs) || !is.numeric(n_runs) || n_runs < 1) n_runs <- 1
 
+      se_method <- input$se_method
+      if (is.null(se_method) || !se_method %in% c("Delta", "Bootstrap")) {
+        se_method <- "Delta"
+      }
+
       results <- tryCatch(
-        fit_esw_multi(
-          records_classified = rv$records_classified,
-          master             = rv$master,
-          sides              = sides,
-          b_start            = input$b_start,
-          k_start            = input$k_start,
-          n_runs             = n_runs
-        ),
+        {
+          if (se_method == "Bootstrap") {
+            withProgress(
+              message = "Computing bootstrap confidence intervals...",
+              detail  = "This may take a few seconds (1000 resamples per side).",
+              value   = 0.5,
+              fit_esw_multi(
+                records_classified = rv$records_classified,
+                master             = rv$master,
+                sides              = sides,
+                b_start            = input$b_start,
+                k_start            = input$k_start,
+                n_runs             = n_runs,
+                se_method          = se_method
+              )
+            )
+          } else {
+            fit_esw_multi(
+              records_classified = rv$records_classified,
+              master             = rv$master,
+              sides              = sides,
+              b_start            = input$b_start,
+              k_start            = input$k_start,
+              n_runs             = n_runs,
+              se_method          = se_method
+            )
+          }
+        },
         error = function(e) {
           showNotification(paste("ESW fitting error:", e$message), type = "error")
           NULL
@@ -457,14 +483,31 @@ sweepWidthServer <- function(id) {
       results
     })
 
+    # Display label for the pooled "Total" fit, distinguishing it from the
+    # Bilateral Total shown on the Combined Plot (sum of separately-fit
+    # Left/Right half-widths). The internal side value passed to fit_esw()
+    # remains "Total" throughout; only the user-facing label changes here.
+    side_display_label <- function(side) {
+      if (side == "Total") "Pooled Total" else side
+    }
+
     output$esw_summary_table <- renderTable({
       req(esw_results())
 
       rows <- lapply(esw_results(), function(res) {
+        w_ci <- if (res$converged && !is.na(res$W_ci_low) && !is.na(res$W_ci_high)) {
+          paste0(round(res$W_ci_low, 2), " – ", round(res$W_ci_high, 2))
+        } else {
+          NA
+        }
         data.frame(
-          Side      = res$side,
+          Side      = side_display_label(res$side),
           n_runs    = if (!is.null(res$n_runs)) res$n_runs else 1L,
           ESW_m     = ifelse(res$converged, round(res$W,    2), NA),
+          W_SE      = ifelse(res$converged, round(res$W_se, 2), NA),
+          W_95CI_m  = w_ci,
+          SE_Method = if (!is.null(res$se_method)) res$se_method else NA,
+          Skewed    = if (!is.null(res$skew_flag) && isTRUE(res$skew_flag)) "Yes" else "",
           b         = ifelse(res$converged, round(res$b,    4), NA),
           b_SE      = ifelse(res$converged, round(res$b_se, 4), NA),
           k         = ifelse(res$converged, round(res$k,    4), NA),
@@ -474,17 +517,142 @@ sweepWidthServer <- function(id) {
         )
       })
 
-      do.call(rbind, rows)
+      summary_df <- do.call(rbind, rows)
+
+      # If both Left and Right converged, append a derived Bilateral Total
+      # row: W_bilateral = W_Left/2 + W_Right/2 (sum of independently-fit
+      # half-widths), matching the value shown on the Combined Plot. This is
+      # NOT the same quantity as Pooled Total (one shared curve fit to
+      # left+right data combined) -- see the Documentation tab. SE is
+      # propagated assuming independence of the Left and Right fits:
+      # Var(W_bilateral) = Var(W_Left)/4 + Var(W_Right)/4.
+      res_L <- esw_results()[["Left"]]
+      res_R <- esw_results()[["Right"]]
+      if (!is.null(res_L) && !is.null(res_R) &&
+          res_L$converged && res_R$converged) {
+
+        w_bilateral <- res_L$W / 2 + res_R$W / 2
+
+        bilateral_se <- if (!is.na(res_L$W_se) && !is.na(res_R$W_se)) {
+          sqrt((res_L$W_se / 2)^2 + (res_R$W_se / 2)^2)
+        } else {
+          NA_real_
+        }
+
+        # Use a t-distribution critical value, consistent with the Delta
+        # method used for the individual Left/Right/Pooled rows, rather than
+        # a fixed normal-based 1.96. Residual df for each side's fit is
+        # (n distance bins - 2 fitted parameters); for the combined interval
+        # we conservatively take the smaller of the two (fewer degrees of
+        # freedom -> wider, more conservative critical value).
+        df_L <- if (!is.null(res_L$prob_df)) nrow(res_L$prob_df) - 2 else NA_integer_
+        df_R <- if (!is.null(res_R$prob_df)) nrow(res_R$prob_df) - 2 else NA_integer_
+        df_bilateral <- if (!is.na(df_L) && !is.na(df_R) && df_L > 0 && df_R > 0) {
+          min(df_L, df_R)
+        } else {
+          NA_integer_
+        }
+        t_crit_bilateral <- if (!is.na(df_bilateral)) {
+          qt(0.975, df = df_bilateral)
+        } else {
+          qnorm(0.975)
+        }
+
+        bilateral_ci <- if (!is.na(bilateral_se)) {
+          paste0(round(w_bilateral - t_crit_bilateral * bilateral_se, 2), " – ",
+                 round(w_bilateral + t_crit_bilateral * bilateral_se, 2))
+        } else {
+          NA
+        }
+
+        bilateral_row <- data.frame(
+          Side      = "Bilateral Total (L/2 + R/2)",
+          n_runs    = if (!is.null(res_L$n_runs)) res_L$n_runs else 1L,
+          ESW_m     = round(w_bilateral, 2),
+          W_SE      = ifelse(is.na(bilateral_se), NA, round(bilateral_se, 2)),
+          W_95CI_m  = bilateral_ci,
+          SE_Method = "Derived (L + R halves)",
+          Skewed    = "",
+          b         = NA,
+          b_SE      = NA,
+          k         = NA,
+          k_SE      = NA,
+          Converged = TRUE,
+          stringsAsFactors = FALSE
+        )
+
+        summary_df <- rbind(summary_df, bilateral_row)
+      }
+
+      summary_df
 
     }, striped = TRUE, hover = TRUE, bordered = TRUE)
 
     output$esw_messages <- renderUI({
       req(esw_results())
-      msgs <- lapply(esw_results(), function(res) {
-        cls <- if (res$converged) "alert alert-success" else "alert alert-warning"
-        tags$div(class = cls, tags$pre(res$message))
+
+      cards <- lapply(esw_results(), function(res) {
+
+        if (!res$converged) {
+          return(tags$div(
+            class = "esw-result-card esw-not-converged",
+            tags$div(class = "esw-result-side", side_display_label(res$side)),
+            tags$div(class = "esw-result-subline", res$message)
+          ))
+        }
+
+        w_ci <- if (!is.na(res$W_ci_low) && !is.na(res$W_ci_high)) {
+          paste0(round(res$W_ci_low, 2), " – ", round(res$W_ci_high, 2), " m")
+        } else {
+          "n/a"
+        }
+        se_label <- if (!is.null(res$se_method) && res$se_method == "Bootstrap") {
+          paste0("Bootstrap, ",
+                 ifelse(is.na(res$n_boot_success), "NA", res$n_boot_success),
+                 "/", res$n_boot, " resamples converged")
+        } else {
+          "Delta method"
+        }
+
+        skew_note <- if (isTRUE(res$skew_flag)) {
+          tags$div(
+            class = "esw-skew-note",
+            tags$strong("\u26a0 Skewed bootstrap distribution: "),
+            paste0(
+              "point estimate (", round(res$W, 2), " m) falls outside the ",
+              "central 50% of the resampled values (median = ",
+              round(res$boot_median, 2), " m). Consider alongside the delta-",
+              "method result."
+            )
+          )
+        } else {
+          NULL
+        }
+
+        tags$div(
+          class = "esw-result-card",
+          tags$div(
+            class = "esw-result-header",
+            tags$span(class = "esw-result-side", side_display_label(res$side)),
+            tags$span(class = "esw-result-headline", paste0("W = ", round(res$W, 2), " m"))
+          ),
+          tags$div(
+            class = "esw-result-subline",
+            paste0("SE = ", ifelse(is.na(res$W_se), "n/a", round(res$W_se, 2)),
+                   " m   ·   95% CI = [", w_ci, "]   ·   ", se_label)
+          ),
+          tags$div(
+            class = "esw-result-params",
+            tags$span(paste0("b = ", round(res$b, 4), " (SE ", round(res$b_se, 4), ")")),
+            tags$span(paste0("k = ", round(res$k, 4), " (SE ", round(res$k_se, 4), ")")),
+            tags$span(paste0(nrow(res$prob_df), " distance bins")),
+            tags$span(paste0("n_runs = ", res$n_runs))
+          ),
+          skew_note
+        )
       })
-      do.call(tagList, msgs)
+
+      do.call(tagList, cards)
     })
 
     output$detection_function_plot <- renderPlot({
@@ -502,6 +670,12 @@ sweepWidthServer <- function(id) {
             ggplot2::aes(x = dist, ymin = 0, ymax = fitted),
             fill  = "steelblue",
             alpha = 0.2
+          ) +
+          ggplot2::geom_ribbon(
+            data = res$fit_df,
+            ggplot2::aes(x = dist, ymin = fitted_lo, ymax = fitted_hi),
+            fill  = "firebrick",
+            alpha = 0.15
           ) +
           ggplot2::geom_line(
             data = res$fit_df,
@@ -531,9 +705,15 @@ sweepWidthServer <- function(id) {
             size  = 3.5
           ) +
           ggplot2::labs(
-            title    = paste0("Detection Function \u2014 ", res$side),
-            subtitle = bquote(p(r) == b %.% e^{-k * r^2} ~
-                                "  W =" ~ .(round(res$W, 2)) ~ "m"),
+            title    = paste0("Detection Function \u2014 ", side_display_label(res$side)),
+            subtitle = if (!is.na(res$W_se)) {
+              bquote(p(r) == b %.% e^{-k * r^2} ~
+                       "  W =" ~ .(round(res$W, 2)) ~
+                       "\u00b1" ~ .(round(res$W_se, 2)) ~ "m")
+            } else {
+              bquote(p(r) == b %.% e^{-k * r^2} ~
+                       "  W =" ~ .(round(res$W, 2)) ~ "m")
+            },
             x        = "Distance from Transect (m)",
             y        = "Detection Probability p(r)"
           ) +
@@ -654,8 +834,10 @@ sweepWidthServer <- function(id) {
 
         ggplot2::labs(
           title    = "Combined Detection Functions \u2014 Left and Right",
-          subtitle = paste0("Total ESW = ",
-                            round(res_L$W / 2 + res_R$W / 2, 2), " m"),
+          subtitle = paste0("Bilateral Total ESW (L/2 + R/2) = ",
+                            round(res_L$W / 2 + res_R$W / 2, 2),
+                            " m  (independently-fit halves; see Documentation ",
+                            "tab for how this differs from Pooled Total)"),
           x        = "Distance from Transect (m), Left \u2190  \u2192 Right",
           y        = "Detection Probability p(r)",
           color    = "Side"
