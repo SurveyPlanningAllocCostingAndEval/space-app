@@ -16,3 +16,9 @@ renv/staging/
 # Local data files — not for version control (may contain sensitive or large files)
 data/
 .positai
+
+# shinyapps.io deployment metadata — machine-local, not part of the codebase
+rsconnect/
+
+# Local Shiny run log
+.shiny_run.log
