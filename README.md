@@ -22,7 +22,7 @@ Clone or download this repository, open R in the `space/` directory, and run:
 shiny::runApp()
 ```
 
-The app is also hosted online at <https://steven-edwards.shinyapps.io/SPACE/>
+The app is also hosted online at <https://steven-edwards.shinyapps.io/SPACE_July_2026/>
 
 ## Dependencies
 
